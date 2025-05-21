@@ -1,0 +1,29 @@
+{
+  "rules": {
+    "locations": {
+      ".read": true,
+      ".write": true,
+      "$sessionId": {
+        ".validate": "newData.hasChildren(['lat', 'lon', 'timestamp'])",
+        "lat": {
+          ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90"
+        },
+        "lon": {
+          ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180"
+        },
+        "timestamp": {
+          ".validate": "newData.isNumber()"
+        },
+        "accuracy": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "speed": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "heading": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 360"
+        }
+      }
+    }
+  }
+} 

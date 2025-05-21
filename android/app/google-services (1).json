@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "653693267112",
+    "firebase_url": "https://sheshiled-f0cc6-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "sheshiled-f0cc6",
+    "storage_bucket": "sheshiled-f0cc6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:653693267112:android:4c49283f72fd8bf9d4269d",
+        "android_client_info": {
+          "package_name": "com.sheshield.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDs-gvLfEmSJqaLfjaH9HYlPmddJn18qeQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emergency Location Tracking</title>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-analytics-compat.js"></script>
+    <!-- Google Maps API - Updated to load with callback -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD2XC2kkvHf9KiXAgy7PKd26bwmvgK4D94&callback=initMap"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: #f5f5f5;
+        }
+        .header {
+            background: #d32f2f;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            text-align: center;
+            background: #f5f5f5;
+            border-bottom: 1px solid #ddd;
+            font-weight: bold;
+        }
+        .status.active {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        .status.inactive {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+        .map-container {
+            flex: 1;
+            position: relative;
+            background: #fff;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        .info-box {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-size: 12px;
+            z-index: 1000;
+        }
+        .error-message {
+            padding: 20px;
+            text-align: center;
+            color: #d32f2f;
+        }
+        @keyframes blink {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+
+        .active-tracking {
+            animation: blink 2s infinite;
+        }
+
+        .location-arrow {
+            position: absolute;
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 16px solid #FF0000;
+            transform-origin: center bottom;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Emergency Location Tracking</h1>
+    </div>
+    <div id="status" class="status">Initializing...</div>
+    <div class="map-container">
+        <div id="map"></div>
+        <div class="info-box">
+            <div>Lat: <span id="lat">-</span></div>
+            <div>Lng: <span id="lng">-</span></div>
+            <div>Last Update: <span id="lastUpdate">-</span></div>
+            <div>Status: <span id="connectionStatus">Connecting...</span></div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let map, marker, pathLine, accuracyCircle, headingIndicator;
+        let unsubscribe;
+        let isMapInitialized = false;
+        let pendingPosition = null;
+        let errorCount = 0;
+        let lastErrorTime;
+        const pathCoordinates = [];
+        const INACTIVE_THRESHOLD = 30000; // 30 seconds
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyBLc6VWE91Dm67Jck5hNOt_tlX7MsDHmdM",
+            authDomain: "sheshiled-f0cc6.firebaseapp.com",
+            projectId: "sheshiled-f0cc6",
+            storageBucket: "sheshiled-f0cc6.firebasestorage.app",
+            messagingSenderId: "653693267112",
+            appId: "1:653693267112:web:adcb0a739738567fd4269d",
+            measurementId: "G-G0MNH2TM1K",
+            databaseURL: "https://sheshiled-f0cc6-default-rtdb.firebaseio.com"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const analytics = firebase.analytics();
+
+        // Get tracking ID from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const trackingId = urlParams.get('uid');
+
+        if (!trackingId) {
+            document.body.innerHTML = `
+                <div class="error-message">
+                    <h2>Error: No Tracking ID</h2>
+                    <p>No tracking ID provided. Please use a valid tracking link.</p>
+                </div>
+            `;
+        } else {
+            // Initialize the map
+            function initMap() {
+                console.log('Initializing map...');
+                try {
+                    // Create map centered at a default location
+                    map = new google.maps.Map(document.getElementById('map'), {
+                        zoom: 15,
+                        center: { lat: 20.5937, lng: 78.9629 }, // Default to center of India
+                        mapTypeId: 'roadmap',
+                        mapTypeControl: true,
+                        streetViewControl: false,
+                        fullscreenControl: true,
+                        zoomControl: true,
+                        gestureHandling: 'greedy'
+                    });
+
+                    // Create marker
+                    marker = new google.maps.Marker({
+                        map: map,
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 8,
+                            fillColor: '#FF0000',
+                            fillOpacity: 1,
+                            strokeColor: '#FFFFFF',
+                            strokeWeight: 2
+                        }
+                    });
+
+                    // Create path line
+                    pathLine = new google.maps.Polyline({
+                        path: pathCoordinates,
+                        geodesic: true,
+                        strokeColor: '#FF0000',
+                        strokeOpacity: 0.8,
+                        strokeWeight: 3,
+                        map: map
+                    });
+
+                    // Create accuracy circle
+                    accuracyCircle = new google.maps.Circle({
+                        strokeColor: '#FF0000',
+                        strokeOpacity: 0.8,
+                        strokeWeight: 2,
+                        fillColor: '#FF0000',
+                        fillOpacity: 0.35,
+                        map: map,
+                        center: { lat: 0, lng: 0 },
+                        radius: 0,
+                        visible: false
+                    });
+
+                    // Create heading indicator
+                    headingIndicator = new google.maps.Marker({
+                        map: map,
+                        icon: {
+                            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                            scale: 3,
+                            fillColor: '#FF0000',
+                            fillOpacity: 1,
+                            strokeColor: '#FFFFFF',
+                            strokeWeight: 2
+                        },
+                        visible: false
+                    });
+
+                    isMapInitialized = true;
+                    console.log('Map initialized successfully');
+                    document.getElementById('status').textContent = 'Map loaded, connecting to tracking...';
+                    
+                    // Start tracking after map is initialized
+                    startTracking();
+                    
+                    // If we have a pending position, update it now
+                    if (pendingPosition) {
+                        updatePositionOnMap(pendingPosition.position, pendingPosition.positions);
+                        pendingPosition = null;
+                    }
+                } catch (error) {
+                    console.error('Error initializing map:', error);
+                    document.getElementById('status').textContent = 'Error initializing map. Please refresh the page.';
+                    document.getElementById('status').className = 'status inactive';
+                }
+            }
+
+            function startTracking() {
+                console.log('Starting tracking...');
+                // Enable offline persistence
+                db.enablePersistence()
+                    .then(() => {
+                        console.log('Offline persistence enabled');
+                        unsubscribe = setupTrackingListener();
+                    })
+                    .catch((err) => {
+                        console.warn('Persistence error:', err);
+                        // Continue with tracking even if persistence fails
+                        unsubscribe = setupTrackingListener();
+                    });
+            }
+
+            // Set up real-time listener
+            function setupTrackingListener() {
+                console.log('Setting up tracking listener...');
+                const trackingRef = db.collection('emergency_tracking').doc(trackingId);
+                
+                return trackingRef.onSnapshot((doc) => {
+                    console.log('Received tracking update');
+                    reconnectAttempts = 0;
+                    
+                    const data = doc.data();
+                    if (!doc.exists || !data) {
+                        handleTrackingError('Tracking session not found');
+                        return;
+                    }
+
+                    // Update connection status
+                    document.getElementById('connectionStatus').textContent = 'Connected';
+                    
+                    // Update status and position
+                    updateTrackingStatus(data);
+                    if (data.currentPosition) {
+                        if (isMapInitialized) {
+                            updatePositionOnMap(data.currentPosition, data.positions);
+                        } else {
+                            pendingPosition = { position: data.currentPosition, positions: data.positions };
+                        }
+                    }
+                }, (error) => {
+                    console.error('Tracking error:', error);
+                    handleTrackingError(error);
+                });
+            }
+
+            function handleTrackingError(error) {
+                console.error('Error reading tracking data:', error);
+                errorCount++;
+                lastErrorTime = new Date();
+                
+                // Log error event
+                analytics.logEvent('tracking_error', {
+                    tracking_id: trackingId,
+                    error_code: error.code || 'unknown',
+                    error_message: error.message,
+                    attempt: reconnectAttempts + 1,
+                    timestamp: new Date().toISOString()
+                });
+                
+                const statusDiv = document.getElementById('status');
+                statusDiv.textContent = `Error: ${error.message} (Attempt ${errorCount})`;
+                statusDiv.className = 'status inactive';
+                
+                // Try to reconnect with exponential backoff
+                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    reconnectAttempts++;
+                    const retryDelay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
+                    setTimeout(() => {
+                        if (document.getElementById('status').className === 'status inactive') {
+                            console.log(`Attempting to reconnect in ${retryDelay/1000}s... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+                            unsubscribe = setupTrackingListener();
+                        }
+                    }, retryDelay);
+                } else {
+                    // Log final failure
+                    analytics.logEvent('tracking_session_failed', {
+                        tracking_id: trackingId,
+                        final_error: error.message,
+                        attempts: reconnectAttempts,
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    statusDiv.textContent = 'Connection failed. Please refresh the page.';
+                }
+            }
+
+            function updateTrackingStatus(data) {
+                const statusDiv = document.getElementById('status');
+                if (data.active) {
+                    const lastUpdate = data.lastUpdate?.toDate();
+                    const now = new Date();
+                    const timeDiff = now - lastUpdate;
+                    const isRecent = timeDiff < 15000;
+                    
+                    let statusText = 'Tracking Active';
+                    if (timeDiff < 5000) {
+                        statusText += ' - Live Updates';
+                    } else if (timeDiff < 15000) {
+                        statusText += ` - Last Update: ${Math.floor(timeDiff/1000)}s ago`;
+                    } else {
+                        statusText += ' - Updates Delayed';
+                    }
+
+                    // Add device info if available
+                    if (data.deviceInfo) {
+                        const { accuracy, speed, heading, lastUpdate: deviceLastUpdate, isHighAccuracy } = data.deviceInfo;
+                        if (accuracy) {
+                            statusText += ` (Accuracy: ${Math.round(accuracy)}m${isHighAccuracy ? ' - High Accuracy' : ''})`;
+                        }
+                        if (speed && speed > 0.5) {
+                            statusText += ` (Speed: ${Math.round(speed * 3.6)}km/h)`;
+                        }
+                        if (heading !== undefined) {
+                            statusText += ` (Heading: ${Math.round(heading)}°)`;
+                        }
+                        if (deviceLastUpdate) {
+                            const deviceTimeDiff = now - deviceLastUpdate.toDate();
+                            if (deviceTimeDiff > 15000) {
+                                statusText += ' - Device Update Delayed';
+                            }
+                        }
+                    }
+                    
+                    statusDiv.textContent = statusText;
+                    statusDiv.className = 'status ' + (isRecent ? 'active' : 'warning');
+                    
+                    // Update accuracy circle visibility based on tracking status
+                    if (accuracyCircle) {
+                        accuracyCircle.setOptions({
+                            fillOpacity: isRecent ? 0.35 : 0.1,
+                            strokeOpacity: isRecent ? 0.8 : 0.3
+                        });
+                    }
+                } else {
+                    statusDiv.textContent = 'Tracking Ended';
+                    statusDiv.className = 'status inactive';
+                    
+                    // Log tracking end
+                    analytics.logEvent('tracking_session_end', {
+                        tracking_id: trackingId,
+                        duration: data.endedAt ? (data.endedAt.toDate() - data.lastUpdate.toDate()) / 1000 : 0,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+            }
+
+            function updatePositionOnMap(position, positions) {
+                if (!map || !marker) return;
+
+                const lat = position.latitude;
+                const lng = position.longitude;
+                const accuracy = position.accuracy || 0;
+                const heading = position.heading;
+                const speed = position.speed || 0;
+                const timestamp = position.timestamp?.toDate() || new Date();
+
+                // Update marker position
+                const newPosition = { lat, lng };
+                marker.setPosition(newPosition);
+
+                // Update accuracy circle
+                if (accuracyCircle) {
+                    accuracyCircle.setCenter(newPosition);
+                    accuracyCircle.setRadius(accuracy);
+                    accuracyCircle.setVisible(true);
+                }
+
+                // Update heading indicator if heading is available
+                if (heading !== undefined && heading !== null && speed > 0.5) {
+                    if (headingIndicator) {
+                        headingIndicator.setPosition(newPosition);
+                        headingIndicator.setRotation(heading);
+                        headingIndicator.setVisible(true);
+                    }
+                } else if (headingIndicator) {
+                    headingIndicator.setVisible(false);
+                }
+
+                // Add to path if it's a new position
+                if (positions && positions.length > 0) {
+                    const newPath = positions.map(p => ({
+                        lat: p.latitude,
+                        lng: p.longitude
+                    }));
+                    pathLine.setPath(newPath);
+                }
+
+                // Center map on new position
+                map.panTo(newPosition);
+
+                // Update info box
+                document.getElementById('lat').textContent = lat.toFixed(6);
+                document.getElementById('lng').textContent = lng.toFixed(6);
+                document.getElementById('lastUpdate').textContent = timestamp.toLocaleTimeString();
+
+                // Update last update time
+                lastUpdateTime = timestamp;
+            }
+
+            // Clean up on page unload
+            window.addEventListener('beforeunload', () => {
+                if (unsubscribe) {
+                    unsubscribe();
+                }
+                if (analytics) {
+                    analytics.logEvent('tracking_page_close', {
+                        tracking_id: trackingId,
+                        duration: lastUpdateTime ? (Date.now() - lastUpdateTime) / 1000 : 0,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+            });
+
+            // Handle map loading errors
+            window.gm_authFailure = function() {
+                console.error('Google Maps authentication failed');
+                document.getElementById('status').textContent = 'Error: Google Maps authentication failed. Please check your API key.';
+                document.getElementById('status').className = 'status inactive';
+            };
+        }
+    </script>
+</body>
+</html> 

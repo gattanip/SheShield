@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Emergency Alert System</title>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <style>
+      /* Reset and base styles */
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        padding: 20px;
+        max-width: 800px;
+        margin: 0 auto;
+        background: #f5f5f5;
+      }
+      .container {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      h1 { 
+        color: #333;
+        margin-bottom: 20px;
+        text-align: center;
+      }
+      .status {
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 4px;
+        text-align: center;
+      }
+      .active {
+        background: #e3f2fd;
+        color: #1976d2;
+      }
+      .inactive {
+        background: #ffebee;
+        color: #d32f2f;
+      }
+      .button {
+        display: block;
+        width: 100%;
+        padding: 12px;
+        margin: 10px 0;
+        border: none;
+        border-radius: 4px;
+        background: #2196f3;
+        color: white;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background 0.3s;
+      }
+      .button:hover { background: #1976d2; }
+      .button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+      }
+      .button.stop {
+        background: #f44336;
+      }
+      .button.stop:hover {
+        background: #d32f2f;
+      }
+      .link-box {
+        margin: 20px 0;
+        padding: 15px;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        word-break: break-all;
+      }
+      .instructions {
+        margin: 20px 0;
+        padding: 15px;
+        background: #fff3e0;
+        border-radius: 4px;
+      }
+      .instructions h2 {
+        color: #e65100;
+        margin-bottom: 10px;
+      }
+      .instructions ul {
+        margin-left: 20px;
+      }
+      .instructions li {
+        margin: 5px 0;
+      }
+      @media (max-width: 600px) {
+        body { padding: 10px; }
+        .container { padding: 15px; }
+      }
+      .tracking-url {
+        background: #f5f5f5;
+        padding: 10px;
+        border-radius: 4px;
+        margin: 10px 0;
+        word-break: break-all;
+      }
+      .share-button {
+        background: #1976d2;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin: 5px 0;
+      }
+      .share-button:hover {
+        background: #1565c0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Emergency Alert System</h1>
+      
+      <div class="instructions">
+        <h2>Instructions</h2>
+        <ul>
+          <li>Click "Start Emergency Tracking" to begin sharing your location</li>
+          <li>Allow location access when prompted by your browser</li>
+          <li>Share the generated link with others to let them track your location</li>
+          <li>Click "Stop Tracking" when you want to end location sharing</li>
+        </ul>
+      </div>
+
+      <div id="userStatus">Loading...</div>
+      
+      <div id="emergencyControls" style="display: none;">
+        <button id="startTracking" class="emergency-button">Start Emergency Tracking</button>
+        <div id="trackingInfo" style="display: none;">
+          <h3>Tracking Active</h3>
+          <div class="tracking-url" id="trackingUrl"></div>
+          <button class="share-button" onclick="shareTrackingUrl()">Share Tracking URL</button>
+          <button class="share-button" onclick="stopTracking()">Stop Tracking</button>
+        </div>
+      </div>
+
+      <div id="loginSection" style="display: none;">
+        <button onclick="signInWithGoogle()">Sign in with Google</button>
+      </div>
+    </div>
+
+    <script>
+      // Firebase configuration
+      const firebaseConfig = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "sheshiled-f0cc6.firebaseapp.com",
+        projectId: "sheshiled-f0cc6",
+        storageBucket: "sheshiled-f0cc6.appspot.com",
+        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+        appId: "YOUR_APP_ID",
+        measurementId: "YOUR_MEASUREMENT_ID"
+      };
+
+      // Initialize Firebase
+      firebase.initializeApp(firebaseConfig);
+      const db = firebase.firestore();
+      const auth = firebase.auth();
+
+      let currentTrackingId = null;
+      let trackingRef = null;
+
+      // Auth state observer
+      auth.onAuthStateChanged((user) => {
+        const userStatus = document.getElementById('userStatus');
+        const emergencyControls = document.getElementById('emergencyControls');
+        const loginSection = document.getElementById('loginSection');
+
+        if (user) {
+          userStatus.textContent = `Signed in as: ${user.email}`;
+          emergencyControls.style.display = 'block';
+          loginSection.style.display = 'none';
+          checkActiveTracking(user.uid);
+        } else {
+          userStatus.textContent = 'Not signed in';
+          emergencyControls.style.display = 'none';
+          loginSection.style.display = 'block';
+        }
+      });
+
+      // Google Sign-in
+      function signInWithGoogle() {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithPopup(provider).catch((error) => {
+          console.error('Sign-in error:', error);
+        });
+      }
+
+      // Start tracking
+      document.getElementById('startTracking').addEventListener('click', async () => {
+        const user = auth.currentUser;
+        if (!user) return;
+
+        try {
+          // Generate tracking ID
+          currentTrackingId = await generateTrackingId();
+          
+          // Create tracking document
+          trackingRef = db.collection('emergency_tracking').doc(currentTrackingId);
+          await trackingRef.set({
+            userId: user.uid,
+            userEmail: user.email,
+            startedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            active: true,
+            lastUpdate: firebase.firestore.FieldValue.serverTimestamp()
+          });
+
+          // Show tracking info
+          const trackingInfo = document.getElementById('trackingInfo');
+          const trackingUrl = document.getElementById('trackingUrl');
+          const trackingUrlString = `https://sheshiled-f0cc6.web.app/track.html?uid=${currentTrackingId}`;
+          
+          trackingUrl.textContent = trackingUrlString;
+          trackingInfo.style.display = 'block';
+          document.getElementById('startTracking').style.display = 'none';
+
+          // Listen for tracking updates
+          trackingRef.onSnapshot((doc) => {
+            if (!doc.exists || !doc.data().active) {
+              stopTracking();
+            }
+          });
+
+        } catch (error) {
+          console.error('Error starting tracking:', error);
+          alert('Failed to start tracking. Please try again.');
+        }
+      });
+
+      // Stop tracking
+      async function stopTracking() {
+        if (!trackingRef) return;
+
+        try {
+          await trackingRef.update({
+            active: false,
+            endedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+
+          // Reset UI
+          document.getElementById('trackingInfo').style.display = 'none';
+          document.getElementById('startTracking').style.display = 'block';
+          currentTrackingId = null;
+          trackingRef = null;
+
+        } catch (error) {
+          console.error('Error stopping tracking:', error);
+        }
+      }
+
+      // Share tracking URL
+      function shareTrackingUrl() {
+        const trackingUrl = document.getElementById('trackingUrl').textContent;
+        if (navigator.share) {
+          navigator.share({
+            title: 'Emergency Location Tracking',
+            text: 'Track my emergency location in real-time',
+            url: trackingUrl
+          }).catch(console.error);
+        } else {
+          // Fallback for browsers that don't support Web Share API
+          navigator.clipboard.writeText(trackingUrl)
+            .then(() => alert('Tracking URL copied to clipboard!'))
+            .catch(console.error);
+        }
+      }
+
+      // Check for active tracking
+      async function checkActiveTracking(userId) {
+        try {
+          const snapshot = await db.collection('emergency_tracking')
+            .where('userId', '==', userId)
+            .where('active', '==', true)
+            .limit(1)
+            .get();
+
+          if (!snapshot.empty) {
+            const doc = snapshot.docs[0];
+            currentTrackingId = doc.id;
+            trackingRef = doc.ref;
+            
+            // Show tracking info
+            const trackingInfo = document.getElementById('trackingInfo');
+            const trackingUrl = document.getElementById('trackingUrl');
+            const trackingUrlString = `https://sheshiled-f0cc6.web.app/track.html?uid=${currentTrackingId}`;
+            
+            trackingUrl.textContent = trackingUrlString;
+            trackingInfo.style.display = 'block';
+            document.getElementById('startTracking').style.display = 'none';
+          }
+        } catch (error) {
+          console.error('Error checking active tracking:', error);
+        }
+      }
+
+      // Generate unique tracking ID
+      async function generateTrackingId() {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let id = '';
+        for (let i = 0; i < 12; i++) {
+          id += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return id;
+      }
+    </script>
+  </body>
+</html>

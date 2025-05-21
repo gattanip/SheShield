@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Location Tracker</title>
+  <!-- Embedded CSS -->
+  <style>
+    /* Reset and base styles */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; height: 100vh; overflow: hidden; }
+    /* Container for the map */
+    #map { width: 100%; height: 100%; }
+    /* Corner box for lat/lng */
+    #infoBox {
+      position: absolute; top: 10px; right: 10px; z-index: 1000; background: rgba(255, 255, 255, 0.8); padding: 10px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); font-size: 14px; }
+    /* Title (header) */
+    h1 { text-align: center; padding: 10px; background: #f0f0f0; margin: 0; font-size: 1.5rem; }
+    /* Responsive adjustments */
+    @media (max-width: 600px) { h1 { font-size: 1.2rem; } #infoBox { font-size: 12px; } }
+  </style>
+</head>
+<body>
+  <h1>Live Location Tracker</h1>
+  <!-- Corner box to display lat/lng -->
+  <div id="infoBox">Latitude: <span id="lat">--</span>°<br>Longitude: <span id="lng">--</span>°</div>
+  <!-- Container for Google Map -->
+  <div id="map"></div>
+
+  <!-- Embedded JavaScript -->
+  <script>
+    // (Assume the Google Maps API key is inserted here.)
+    const apiKey = "AIzaSyD2XC2kkvHf9KiXAgy7PKd26bwmvgK4D94";
+    // Load the Google Maps JavaScript API dynamically.
+    (function loadGoogleMapsScript() {
+      const script = document.createElement("script");
+      script.src = "https://maps.googleapis.com/maps/api/js?key=" + apiKey + "&callback=initMap";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    })();
+
+    // Global variables for the map, marker, and info window.
+    var map, marker, infoWindow;
+
+    // Callback function (called by the Google Maps API once loaded) to initialize the map.
+    function initMap() {
+      // Create a new Google Map centered at (0,0) (will be updated by geolocation).
+      map = new google.maps.Map(document.getElementById("map"), { zoom: 15, center: { lat: 0, lng: 0 } });
+      // Create a marker (initially hidden) and an info window.
+      marker = new google.maps.Marker({ map: map, title: "Your Location", visible: false });
+      infoWindow = new google.maps.InfoWindow({ content: "You are here." });
+      // Start watching the user's position (using navigator.geolocation).
+      if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(updatePosition, handleError, { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 });
+      } else {
+        alert("Geolocation is not supported by your browser.");
+      }
+    }
+
+    // Function to update the marker and info box (called by watchPosition).
+    function updatePosition(pos) {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const newPos = { lat, lng };
+      // Update the marker's position (and make it visible if hidden).
+      marker.setPosition(newPos);
+      marker.setVisible(true);
+      // Center the map on the new position.
+      map.setCenter(newPos);
+      // Update the corner info box.
+      document.getElementById("lat").textContent = lat.toFixed(6);
+      document.getElementById("lng").textContent = lng.toFixed(6);
+      // (Optional) open an info window on the marker.
+      infoWindow.open(map, marker);
+    }
+
+    // Error handler for geolocation errors.
+    function handleError(err) {
+      let msg = "Error: ";
+      switch (err.code) {
+        case err.PERMISSION_DENIED: msg += "Location access denied."; break;
+        case err.POSITION_UNAVAILABLE: msg += "Location unavailable."; break;
+        case err.TIMEOUT: msg += "Location request timed out."; break;
+        default: msg += "Unknown error (" + err.code + ").";
+      }
+      alert(msg);
+    }
+  </script>
+</body>
+</html> 

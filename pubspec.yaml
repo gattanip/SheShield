@@ -1,0 +1,45 @@
+name: sheshield
+description: A women safety app with emergency alerts and location sharing.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.2
+  firebase_core: ^2.32.0
+  firebase_database: ^10.5.7
+  geolocator: ^10.1.0
+  url_launcher: ^6.2.5
+  shared_preferences: ^2.2.2
+  permission_handler: ^11.3.0
+  flutter_foreground_task: ^9.1.0
+  uuid: ^4.3.3
+  flutter_local_notifications: ^16.3.3
+  google_maps_flutter: ^2.5.0
+  flutter_contacts: ^1.1.9+2
+  telephony:
+    path: android/telephony
+  cloud_firestore: ^4.15.5
+  just_audio: ^0.9.36
+  audio_session: ^0.1.18
+  provider: ^6.1.1
+  intl: ^0.18.1
+  app_settings: ^5.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/audio/
+    - assets/audio/help_me.wav
+
+  
