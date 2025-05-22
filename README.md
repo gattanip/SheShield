@@ -12,41 +12,65 @@ A Flutter-based emergency alert and location tracking application designed to en
 - Settings management for permissions and alerts
 - Live tracking web interface
 
-## Getting Started
+## Setup Instructions
 
-### Prerequisites
+### 1. Prerequisites
+- [Flutter SDK](https://flutter.dev/docs/get-started/install) (latest stable)
+- Android Studio or Xcode (for building on Android/iOS)
+- A valid keystore for Android release builds
+- Your own Firebase/Google Services configuration files (e.g., `google-services.json`, `GoogleService-Info.plist`)
 
-- Flutter SDK (latest stable version)
-- Dart SDK (latest stable version)
-- Firebase project setup
-- Android Studio / VS Code
-- Physical device or emulator for testing
+### 2. Downloading the Project
+- Clone the repository:
+  ```
+  git clone https://github.com/gattanip/SheShield.git
+  cd SheShield
+  ```
 
-### Installation
+### 3. After Downloading
+- Run `flutter pub get` to fetch dependencies.
+- Place your Firebase/Google config files:
+  - `android/app/google-services.json`
+  - `ios/Runner/GoogleService-Info.plist`
+- (Optional) Update app icons in `assets/icons/app_icon.png` and run:
+  ```
+  flutter pub run flutter_launcher_icons
+  ```
+- For Android release builds, provide your own keystore and update `android/key.properties`:
+  ```
+  storePassword=your_keystore_password
+  keyPassword=your_key_password
+  keyAlias=your_key_alias
+  storeFile=your_keystore_file.keystore
+  ```
+- **Do NOT commit your keys, passwords, or config files to git.**
 
-1. Clone the repository:
-```bash
-git clone https://github.com/gattanip/SheShield.git
-cd SheShield
-```
+### 4. Building the App
+- For Android APK:
+  ```
+  flutter build apk --release
+  ```
+- For iOS:
+  ```
+  flutter build ios --release
+  ```
 
-2. Install dependencies:
-```bash
-flutter pub get
-```
+## Required Keys/Configs (NOT included in repo)
+- `android/app/google-services.json` (Firebase Android config)
+- `ios/Runner/GoogleService-Info.plist` (Firebase iOS config)
+- `android/app/sheshield.keystore` (Android signing keystore)
+- `android/key.properties` (Keystore config)
 
-3. Configure Firebase:
-   - Create a new Firebase project
-   - Add Android and iOS apps to your Firebase project
-   - Download and add the configuration files:
-     - `google-services.json` for Android
-     - `GoogleService-Info.plist` for iOS
-   - Enable Firebase services (Firestore, Authentication)
+## Security
+- Sensitive files are excluded via `.gitignore`:
+  - Keystore files
+  - Key properties
+  - Firebase/Google config files
+  - Any `.json` or `.env` secrets
+- **Never share your keys or passwords publicly.**
 
-4. Run the app:
-```bash
-flutter run
-```
+## Support
+For issues, open a GitHub issue or contact the maintainer.
 
 ## Configuration
 
