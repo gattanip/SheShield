@@ -1,160 +1,199 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:isolate';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:url_launcher/url_launcher.dart';
-import '../main.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
+import 'logging_service.dart';
 
-// Define the callback function for the foreground task
-@pragma('vm:entry-point')
-void startCallback() {
-  FlutterForegroundTask.setTaskHandler(LocationTaskHandler());
+// Base interface for location services
+abstract class ILocationService {
+  Future<void> initialize();
+  Future<void> startLocationSharing();
+  Future<void> stopLocationSharing();
+  Future<String> getTrackingUrl();
+  Future<Position> getCurrentPosition();
+  bool get isInitialized;
+  bool get isSharing;
 }
 
-class LocationService {
+class LocationService implements ILocationService {
   static final LocationService _instance = LocationService._internal();
   factory LocationService() => _instance;
   LocationService._internal();
 
-  static const String _locationChannelId = 'sheshield_location_channel';
-  static const String _locationChannelName = 'Location Tracking';
-  static const String _locationChannelDesc = 'This notification is used to track your location in case of emergency.';
+  final LoggingService _logger = LoggingService();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   
-  final DatabaseReference _database = FirebaseDatabase.instance.ref();
-  String? _trackingId;
-  StreamSubscription<Position>? _positionStream;
+  bool _isInitialized = false;
+  bool _isSharing = false;
+  Timer? _locationUpdateTimer;
+  Position? _lastPosition;
+  DateTime? _lastUpdateTime;
+  
+  @override
+  bool get isInitialized => _isInitialized;
+  @override
+  bool get isSharing => _isSharing;
 
-  String getTrackingUrl() {
-    if (_trackingId == null) {
-      throw Exception('Location tracking not started');
+  @override
+  Future<void> initialize() async {
+    if (_isInitialized) return;
+
+    try {
+      await _logger.initialize();
+      await _logger.log(LogLevel.info, 'LocationService', 'Initializing location service...');
+      
+      // Initialize foreground task
+      FlutterForegroundTask.init(
+        androidNotificationOptions: AndroidNotificationOptions(
+          channelId: 'sheshield_location_channel',
+          channelName: 'Location Sharing',
+          channelDescription: 'This notification is used for location sharing.',
+          channelImportance: NotificationChannelImportance.HIGH,
+          priority: NotificationPriority.HIGH,
+          iconData: const NotificationIconData(
+            resType: ResourceType.mipmap,
+            resPrefix: ResourcePrefix.ic,
+            name: 'launcher',
+          ),
+        ),
+        iosNotificationOptions: const IOSNotificationOptions(
+          showNotification: true,
+          playSound: false,
+        ),
+        foregroundTaskOptions: const ForegroundTaskOptions(
+          interval: 5000,
+          isOnceEvent: false,
+          autoRunOnBoot: false,
+          allowWakeLock: true,
+          allowWifiLock: true,
+        ),
+      );
+
+      _isInitialized = true;
+      await _logger.log(LogLevel.info, 'LocationService', 'Location service initialized successfully');
+    } catch (e, stackTrace) {
+      await _logger.log(LogLevel.error, 'LocationService', 'Failed to initialize location service', e, stackTrace);
+      rethrow;
     }
-    // Return the web URL where the location can be tracked
-    return 'https://sheshiled-f0cc6.web.app/loc/$_trackingId';
   }
 
-  Future<Position> getCurrentLocation() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      throw Exception('Location services are disabled.');
+  @override
+  Future<void> startLocationSharing() async {
+    if (!_isInitialized) {
+      throw Exception('Location service not initialized');
     }
 
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        throw Exception('Location permissions are denied');
+    if (_isSharing) {
+      await _logger.log(LogLevel.warning, 'LocationService', 'Location sharing already active');
+      return;
+    }
+
+    try {
+      await _logger.log(LogLevel.info, 'LocationService', 'Starting location sharing...');
+      
+      // Check location permission
+      final permission = await Permission.location.request();
+      if (!permission.isGranted) {
+        throw Exception('Location permission not granted');
       }
+
+      // Start foreground task
+      await FlutterForegroundTask.startService(
+        notificationTitle: 'SheShield Location Sharing',
+        notificationText: 'Your location is being shared for safety.',
+      );
+      
+      // Start periodic location updates
+      _locationUpdateTimer?.cancel();
+      _locationUpdateTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+        _updateLocation();
+      });
+
+      _isSharing = true;
+      await _logger.log(LogLevel.info, 'LocationService', 'Location sharing started successfully');
+    } catch (e, stackTrace) {
+      await _logger.log(LogLevel.error, 'LocationService', 'Error starting location sharing', e, stackTrace);
+      rethrow;
     }
-
-    if (permission == LocationPermission.deniedForever) {
-      throw Exception('Location permissions are permanently denied');
-    }
-
-    return await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-    );
-  }
-
-  Future<void> startLocationTracking() async {
-    if (_trackingId != null) return;
-
-    final status = await Permission.location.request();
-    if (!status.isGranted) {
-      throw Exception('Location permission not granted');
-    }
-
-    _trackingId = DateTime.now().millisecondsSinceEpoch.toString();
-    final position = await getCurrentLocation();
-
-    await _database.child('locations/$_trackingId').set({
-      'latitude': position.latitude,
-      'longitude': position.longitude,
-      'timestamp': ServerValue.timestamp,
-      'status': 'active',
-    });
-
-    // Start the foreground service
-    await FlutterForegroundTask.startService(
-      notificationTitle: 'SheShield Location Tracking',
-      notificationText: 'Tracking your location for safety',
-      callback: startCallback,
-    );
-
-    // Start position updates
-    _positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
-      ),
-    ).listen((Position position) async {
-      if (_trackingId != null) {
-        try {
-          await _database.child('locations/$_trackingId').update({
-            'latitude': position.latitude,
-            'longitude': position.longitude,
-            'timestamp': ServerValue.timestamp,
-            'status': 'active',
-          });
-        } catch (e) {
-          debugPrint('Error updating location: $e');
-        }
-      }
-    });
-  }
-
-  Future<void> stopLocationTracking() async {
-    if (_trackingId == null) return;
-
-    await _positionStream?.cancel();
-    _positionStream = null;
-
-    await _database.child('locations/$_trackingId').update({
-      'status': 'inactive',
-      'timestamp': ServerValue.timestamp,
-    });
-
-    await FlutterForegroundTask.stopService();
-    _trackingId = null;
-  }
-
-  Future<void> shareLocation(String phoneNumber) async {
-    final position = await getCurrentLocation();
-    final url = 'https://maps.google.com/?q=${position.latitude},${position.longitude}';
-    final whatsappUrl = 'https://wa.me/$phoneNumber?text=My current location: $url';
-
-    if (await canLaunchUrl(Uri.parse(whatsappUrl))) {
-      await launchUrl(Uri.parse(whatsappUrl));
-    } else {
-      throw Exception('Could not launch WhatsApp');
-    }
-  }
-}
-
-@pragma('vm:entry-point')
-class LocationTaskHandler extends TaskHandler {
-  @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    // Initialize any resources needed for the background task
   }
 
   @override
-  Future<void> onEvent(DateTime timestamp, SendPort? sendPort) async {
-    // This method is called periodically based on the taskInterval
-    // We don't need to do anything here as we're using the position stream
+  Future<void> stopLocationSharing() async {
+    if (!_isSharing) {
+      await _logger.log(LogLevel.info, 'LocationService', 'Location sharing not active');
+      return;
+    }
+
+    try {
+      await _logger.log(LogLevel.info, 'LocationService', 'Stopping location sharing...');
+      
+      // Stop foreground task
+      await FlutterForegroundTask.stopService();
+      
+      // Stop location updates
+      _locationUpdateTimer?.cancel();
+      _locationUpdateTimer = null;
+      
+      _isSharing = false;
+      await _logger.log(LogLevel.info, 'LocationService', 'Location sharing stopped successfully');
+    } catch (e, stackTrace) {
+      await _logger.log(LogLevel.error, 'LocationService', 'Error stopping location sharing', e, stackTrace);
+      rethrow;
+    }
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
-    // Clean up any resources when the task is destroyed
+  Future<String> getTrackingUrl() async {
+    if (!_isSharing) {
+      throw Exception('Location sharing not active');
+    }
+
+    try {
+      final position = await getCurrentPosition();
+      return 'https://maps.google.com/?q=${position.latitude},${position.longitude}';
+    } catch (e, stackTrace) {
+      await _logger.log(LogLevel.error, 'LocationService', 'Error getting tracking URL', e, stackTrace);
+      rethrow;
+    }
   }
 
   @override
-  void onRepeatEvent(DateTime timestamp) {
-    // This method is called when the task is repeated
-    // We don't need to implement this as we're using the position stream
+  Future<Position> getCurrentPosition() async {
+    try {
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+    } catch (e, stackTrace) {
+      await _logger.log(LogLevel.error, 'LocationService', 'Error getting current position', e, stackTrace);
+      rethrow;
+    }
+  }
+
+  Future<void> _updateLocation() async {
+    if (!_isSharing) return;
+
+    try {
+      final position = await getCurrentPosition();
+      final now = DateTime.now();
+
+      // Update last known position
+      _lastPosition = position;
+      _lastUpdateTime = now;
+
+      await _logger.log(LogLevel.debug, 'LocationService', 'Location updated: ${position.latitude}, ${position.longitude}');
+    } catch (e, stackTrace) {
+      await _logger.log(LogLevel.error, 'LocationService', 'Error updating location', e, stackTrace);
+    }
+  }
+
+  @override
+  void dispose() {
+    stopLocationSharing();
+    _locationUpdateTimer?.cancel();
   }
 } 

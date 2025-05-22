@@ -69,3 +69,41 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+
+# Flutter/Dart/Pub related
+.flutter-versions
+.idea/
+.metadata
+android/.gradle/
+android/key.properties
+android/app/sheshield.keystore
+
+# Sensitive files
+*.jks
+*.keystore
+*.p12
+*.pem
+*.json
+key.properties
+
+# macOS
+macos/Flutter/ephemeral/
+
+# Web
+web/generated/
+
+# Windows
+windows/runner/Debug/
+windows/runner/Release/
+
+# Linux
+linux/flutter/ephemeral/
+
+# iOS
+ios/Flutter/ephemeral/
+ios/Pods/
+
+# Other
+*.log
+.DS_Store
+.env

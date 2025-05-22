@@ -49,12 +49,12 @@ class _ContactsScreenState extends State<ContactsScreen> {
     
     // If number starts with 0, replace with country code (assuming India +91)
     if (digits.startsWith('0')) {
-      digits = '91${digits.substring(1)}';
+      digits = '+91${digits.substring(1)}';
     }
     
     // If number doesn't start with country code, add +91 (India)
-    if (!digits.startsWith('91')) {
-      digits = '91$digits';
+    if (!digits.startsWith('+1')) {
+      digits = '+91$digits';
     }
     
     // Add + prefix
@@ -129,7 +129,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
       final fullContact = await FlutterContacts.getContact(contact.id);
       if (fullContact == null) return;
 
-      // Get the first phone number
       if (fullContact.phones.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -142,8 +141,43 @@ class _ContactsScreenState extends State<ContactsScreen> {
         return;
       }
 
-      // Format phone number
-      final formattedPhone = _formatPhoneNumber(fullContact.phones.first.number);
+      // Format the phone number using EmergencyService's logic
+      final phoneNumber = fullContact.phones.first.number;
+      String formattedPhone;
+      try {
+        // Clean the number first
+        String cleanedNumber = phoneNumber.trim();
+        cleanedNumber = cleanedNumber.replaceAll(RegExp(r'[^\d+]'), '');
+        
+        // Handle existing plus sign and country code
+        if (cleanedNumber.startsWith('+91')) {
+          cleanedNumber = cleanedNumber.substring(3);
+        } else if (cleanedNumber.startsWith('91')) {
+          cleanedNumber = cleanedNumber.substring(2);
+        } else if (cleanedNumber.startsWith('+')) {
+          cleanedNumber = cleanedNumber.substring(1);
+        }
+        
+        // Validate base number length
+        if (cleanedNumber.length != 10) {
+          throw Exception('Phone number must be 10 digits after removing country code');
+        }
+        
+        // Format with +91 prefix
+        formattedPhone = '+91$cleanedNumber';
+        
+        // Final validation
+        if (!RegExp(r'^\+91\d{10}$').hasMatch(formattedPhone)) {
+          throw Exception('Invalid phone number format');
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Invalid phone number: ${e.toString()}')),
+          );
+        }
+        return;
+      }
 
       // Show dialog to confirm adding the contact
       final confirmed = await showDialog<bool>(

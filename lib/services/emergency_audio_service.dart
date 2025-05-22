@@ -2,11 +2,15 @@ import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'dart:io';
+import 'logging_service.dart';
 
 class EmergencyAudioService {
   AudioPlayer? _audioPlayer;
   bool _isPlaying = false;
   bool _isEmergencyActive = false;
+  final LoggingService _logger = LoggingService();
 
   Future<void> initialize() async {
     try {
@@ -87,63 +91,113 @@ class EmergencyAudioService {
   }
 
   Future<void> startEmergencySound() async {
-    if (_isEmergencyActive) {
-      debugPrint("Emergency audio is already active");
+    if (_isPlaying) {
+      await _logger.log(LogLevel.info, 'EmergencyAudioService', 'Emergency sound already playing');
       return;
     }
 
     try {
-      debugPrint("Starting emergency audio...");
+      // Request audio permissions first
+      await _requestAudioPermissions();
+      
+      // Initialize audio player if needed
       if (_audioPlayer == null) {
-        debugPrint("Audio player not initialized, reinitializing...");
-        await initialize();
+        _audioPlayer = AudioPlayer();
+        await _audioPlayer!.setAsset('assets/audio/help_me.mp3');
+        await _audioPlayer!.setLoopMode(LoopMode.all);
+        await _audioPlayer!.setVolume(1.0);
       }
 
-      _isEmergencyActive = true;
-      await _audioPlayer?.seek(Duration.zero);
-      await _audioPlayer?.play();
+      // Ensure audio session is active
+      await _audioPlayer!.setAudioSource(
+        AudioSource.asset('assets/audio/help_me.mp3'),
+        preload: true,
+      );
+
+      // Start playback
+      await _audioPlayer!.play();
+      _isPlaying = true;
       
-      final state = _audioPlayer?.playerState;
-      debugPrint("Playback state after start: ${state?.processingState}");
-      debugPrint("Playing status after start: ${state?.playing}");
-      debugPrint("Emergency audio started successfully");
-    } catch (e, stackTrace) {
-      debugPrint("Error starting emergency audio: $e");
-      debugPrint("Stack trace: $stackTrace");
-      _isPlaying = false;
-      _isEmergencyActive = false;
-      
-      try {
-        await _audioPlayer?.stop();
-        await initialize();
-        _isEmergencyActive = true;
-        await _audioPlayer?.play();
-        debugPrint("Recovered from error and audio started");
-      } catch (recoveryError) {
-        debugPrint("Failed to recover audio error: $recoveryError");
-        rethrow;
+      // Listen for playback errors
+      _audioPlayer!.playerStateStream.listen((state) {
+        if (state.processingState == ProcessingState.completed) {
+          // Restart if playback completes (shouldn't happen due to loop mode)
+          _audioPlayer?.play();
+        }
+      }, onError: (e) async {
+        await _logger.log(LogLevel.error, 'EmergencyAudioService', 'Audio playback error', e);
+        // Try to recover
+        await _recoverAudioPlayback();
+      });
+
+      await _logger.log(LogLevel.info, 'EmergencyAudioService', 'Emergency sound started successfully');
+    } catch (e) {
+      await _logger.log(LogLevel.error, 'EmergencyAudioService', 'Error starting emergency sound', e);
+      // Try to recover
+      await _recoverAudioPlayback();
+      rethrow;
+    }
+  }
+
+  Future<void> _requestAudioPermissions() async {
+    try {
+      final status = await Permission.audio.request();
+      if (!status.isGranted) {
+        throw Exception('Audio permission denied');
       }
+      
+      // Additional check for Android audio focus
+      if (Platform.isAndroid) {
+        final result = await const MethodChannel('com.SheShield.app/audio')
+            .invokeMethod<bool>('requestAudioFocus');
+        if (result != true) {
+          throw Exception('Failed to get audio focus');
+        }
+      }
+    } catch (e) {
+      await _logger.log(LogLevel.error, 'EmergencyAudioService', 'Error requesting audio permissions', e);
+      rethrow;
+    }
+  }
+
+  Future<void> _recoverAudioPlayback() async {
+    try {
+      // Dispose existing player
+      await _audioPlayer?.dispose();
+      _audioPlayer = null;
+      
+      // Wait a moment before retrying
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // Try to start playback again
+      if (_isPlaying) {
+        await startEmergencySound();
+      }
+    } catch (e) {
+      await _logger.log(LogLevel.error, 'EmergencyAudioService', 'Error recovering audio playback', e);
     }
   }
 
   Future<void> stopEmergencySound() async {
-    if (!_isEmergencyActive) {
-      debugPrint("Emergency audio is not active");
+    if (!_isPlaying) {
+      await _logger.log(LogLevel.info, 'EmergencyAudioService', 'Emergency sound not playing');
       return;
     }
 
     try {
-      debugPrint("Stopping emergency audio...");
-      _isEmergencyActive = false;
       await _audioPlayer?.stop();
       _isPlaying = false;
-      debugPrint("Emergency audio stopped successfully");
-    } catch (e, stackTrace) {
-      debugPrint("Error stopping emergency audio: $e");
-      debugPrint("Stack trace: $stackTrace");
-      _isPlaying = false;
-      _isEmergencyActive = false;
-      _audioPlayer?.stop();
+      
+      // Release audio focus on Android
+      if (Platform.isAndroid) {
+        await const MethodChannel('com.SheShield.app/audio')
+            .invokeMethod('abandonAudioFocus');
+      }
+      
+      await _logger.log(LogLevel.info, 'EmergencyAudioService', 'Emergency sound stopped successfully');
+    } catch (e) {
+      await _logger.log(LogLevel.error, 'EmergencyAudioService', 'Error stopping emergency sound', e);
+      rethrow;
     }
   }
 
